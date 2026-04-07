@@ -1,0 +1,56 @@
+{
+  "name": "Refaccionaria WMS - Sistema de Almacén",
+  "short_name": "RefaccionariaWMS",
+  "description": "Sistema de gestión de almacén con códigos de barras y QR para refaccionarias",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#1a237e",
+  "theme_color": "#1a237e",
+  "orientation": "any",
+  "scope": "/",
+  "icons": [
+    {
+      "src": "icons/icon-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icons/icon-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["business", "productivity"],
+  "screenshots": [
+    {
+      "src": "screenshots/dashboard.png",
+      "sizes": "1280x720",
+      "type": "image/png",
+      "form_factor": "wide"
+    },
+    {
+      "src": "screenshots/mobile.png",
+      "sizes": "750x1334",
+      "type": "image/png",
+      "form_factor": "narrow"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Escanear",
+      "short_name": "Escanear",
+      "description": "Abrir escáner de códigos",
+      "url": "/?action=scan",
+      "icons": [{ "src": "icons/scan.png", "sizes": "96x96" }]
+    },
+    {
+      "name": "Productos",
+      "short_name": "Productos",
+      "description": "Ver lista de productos",
+      "url": "/?view=products",
+      "icons": [{ "src": "icons/products.png", "sizes": "96x96" }]
+    }
+  ]
+}
