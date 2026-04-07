@@ -1,0 +1,1109 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="theme-color" content="#1a237e">
+    <meta name="description" content="Sistema de Gestión de Almacén para Refaccionaria - Control de inventario con códigos de barras y QR">
+    <title>Refaccionaria WMS - Gestión de Almacén</title>
+    
+    <!-- PWA -->
+    <link rel="manifest" href="manifest.json">
+    <link rel="apple-touch-icon" href="icons/icon-192x192.png">
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Html5Qrcode para escaneo -->
+    <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+    
+    <!-- Supabase -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    
+    <!-- Chart.js para reportes -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <style>
+        /* Estilos personalizados */
+        :root {
+            --primary: #1a237e;
+            --secondary: #ff6f00;
+            --success: #4caf50;
+            --danger: #f44336;
+            --warning: #ff9800;
+        }
+        
+        * {
+            -webkit-tap-highlight-color: transparent;
+        }
+        
+        body {
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            background: #f5f5f5;
+            overscroll-behavior: none;
+        }
+        
+        /* Scanner overlay */
+        .scanner-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.9);
+            z-index: 9999;
+            display: none;
+        }
+        
+        .scanner-container {
+            position: relative;
+            width: 100%;
+            max-width: 600px;
+            margin: 0 auto;
+            top: 50%;
+            transform: translateY(-50%);
+        }
+        
+        .scan-region {
+            border: 3px solid var(--secondary);
+            border-radius: 20px;
+            overflow: hidden;
+            box-shadow: 0 0 0 9999px rgba(0,0,0,0.5);
+        }
+        
+        /* Animaciones */
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.05); opacity: 0.8; }
+        }
+        
+        .pulse {
+            animation: pulse 2s infinite;
+        }
+        
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        
+        .slide-in {
+            animation: slideIn 0.3s ease-out;
+        }
+        
+        /* Grid de ubicaciones tipo Amazon */
+        .location-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+            gap: 12px;
+        }
+        
+        .location-card {
+            aspect-ratio: 1;
+            border-radius: 12px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.3s;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .location-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+        }
+        
+        .location-card.occupied {
+            background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
+            border: 2px solid var(--primary);
+        }
+        
+        .location-card.empty {
+            background: linear-gradient(135deg, #f5f5f5 0%, #e0e0e0 100%);
+            border: 2px dashed #bdbdbd;
+        }
+        
+        .location-card.full {
+            background: linear-gradient(135deg, #ffebee 0%, #ffcdd2 100%);
+            border: 2px solid var(--danger);
+        }
+        
+        /* Vista de rack */
+        .rack-visual {
+            background: #fff;
+            border-radius: 16px;
+            padding: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        
+        .shelf {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 8px;
+            padding: 12px;
+            background: #f5f5f5;
+            border-radius: 8px;
+            min-height: 80px;
+            align-items: center;
+        }
+        
+        .slot {
+            flex: 1;
+            min-height: 60px;
+            border: 2px dashed #ccc;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+            background: white;
+        }
+        
+        .slot:hover {
+            border-color: var(--primary);
+            background: #e8eaf6;
+        }
+        
+        .slot.occupied {
+            border-style: solid;
+            border-color: var(--primary);
+            background: #e3f2fd;
+        }
+        
+        /* Producto en slot */
+        .product-mini {
+            text-align: center;
+            padding: 4px;
+        }
+        
+        .product-mini img {
+            width: 40px;
+            height: 40px;
+            object-fit: cover;
+            border-radius: 4px;
+        }
+        
+        /* Indicadores de estado */
+        .status-badge {
+            position: absolute;
+            top: 4px;
+            right: 4px;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+        }
+        
+        .status-badge.available { background: var(--success); }
+        .status-badge.low { background: var(--warning); }
+        .status-badge.critical { background: var(--danger); }
+        
+        /* Bottom nav móvil */
+        .bottom-nav {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: white;
+            border-top: 1px solid #e0e0e0;
+            display: flex;
+            justify-content: space-around;
+            padding: 8px 0;
+            z-index: 1000;
+        }
+        
+        .nav-item {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 8px 16px;
+            color: #757575;
+            cursor: pointer;
+            transition: color 0.2s;
+        }
+        
+        .nav-item.active {
+            color: var(--primary);
+        }
+        
+        .nav-item svg {
+            width: 24px;
+            height: 24px;
+            margin-bottom: 4px;
+        }
+        
+        /* Desktop sidebar */
+        .sidebar {
+            position: fixed;
+            left: 0;
+            top: 0;
+            bottom: 0;
+            width: 260px;
+            background: var(--primary);
+            color: white;
+            padding: 20px;
+            overflow-y: auto;
+            z-index: 100;
+        }
+        
+        .sidebar-item {
+            display: flex;
+            align-items: center;
+            padding: 12px 16px;
+            margin-bottom: 8px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        
+        .sidebar-item:hover, .sidebar-item.active {
+            background: rgba(255,255,255,0.1);
+        }
+        
+        .sidebar-item svg {
+            width: 20px;
+            height: 20px;
+            margin-right: 12px;
+        }
+        
+        /* Contenido principal */
+        .main-content {
+            margin-left: 260px;
+            padding: 24px;
+            padding-bottom: 80px;
+        }
+        
+        @media (max-width: 768px) {
+            .sidebar { display: none; }
+            .main-content { margin-left: 0; padding: 16px; padding-bottom: 100px; }
+        }
+        
+        /* Cards de estadísticas */
+        .stat-card {
+            background: white;
+            border-radius: 16px;
+            padding: 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        
+        /* Búsqueda rápida */
+        .search-box {
+            position: relative;
+            max-width: 600px;
+        }
+        
+        .search-box input {
+            width: 100%;
+            padding: 16px 48px 16px 20px;
+            border: 2px solid #e0e0e0;
+            border-radius: 12px;
+            font-size: 16px;
+            transition: border-color 0.2s;
+        }
+        
+        .search-box input:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
+        
+        .search-box button {
+            position: absolute;
+            right: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: var(--primary);
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 8px;
+            cursor: pointer;
+        }
+        
+        /* Modal */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            z-index: 2000;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        
+        .modal.active {
+            display: flex;
+        }
+        
+        .modal-content {
+            background: white;
+            border-radius: 20px;
+            max-width: 600px;
+            width: 100%;
+            max-height: 90vh;
+            overflow-y: auto;
+            animation: slideIn 0.3s ease-out;
+        }
+        
+        /* Formularios */
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #333;
+        }
+        
+        .form-group input, .form-group select, .form-group textarea {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            font-size: 16px;
+            transition: border-color 0.2s;
+        }
+        
+        .form-group input:focus, .form-group select:focus, .form-group textarea:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
+        
+        /* Botones de acción */
+        .btn {
+            padding: 12px 24px;
+            border-radius: 10px;
+            border: none;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .btn-primary {
+            background: var(--primary);
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background: #0d1642;
+            transform: translateY(-2px);
+        }
+        
+        .btn-secondary {
+            background: var(--secondary);
+            color: white;
+        }
+        
+        .btn-success {
+            background: var(--success);
+            color: white;
+        }
+        
+        .btn-danger {
+            background: var(--danger);
+            color: white;
+        }
+        
+        /* Toast notifications */
+        .toast {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 16px 24px;
+            border-radius: 12px;
+            color: white;
+            font-weight: 500;
+            z-index: 3000;
+            transform: translateX(400px);
+            transition: transform 0.3s;
+        }
+        
+        .toast.show {
+            transform: translateX(0);
+        }
+        
+        .toast.success { background: var(--success); }
+        .toast.error { background: var(--danger); }
+        .toast.warning { background: var(--warning); }
+        
+        /* Vista de producto */
+        .product-detail {
+            display: grid;
+            grid-template-columns: 1fr 2fr;
+            gap: 24px;
+        }
+        
+        @media (max-width: 768px) {
+            .product-detail { grid-template-columns: 1fr; }
+        }
+        
+        .product-image {
+            background: #f5f5f5;
+            border-radius: 16px;
+            aspect-ratio: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+        
+        .product-image img {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+        }
+        
+        /* Lista de movimientos */
+        .movement-item {
+            display: flex;
+            align-items: center;
+            padding: 16px;
+            background: white;
+            border-radius: 12px;
+            margin-bottom: 12px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+        
+        .movement-icon {
+            width: 48px;
+            height: 48px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-right: 16px;
+        }
+        
+        .movement-icon.in { background: #e8f5e9; color: var(--success); }
+        .movement-icon.out { background: #ffebee; color: var(--danger); }
+        .movement-icon.move { background: #fff3e0; color: var(--warning); }
+        
+        /* Impresión de etiquetas */
+        .label-preview {
+            width: 100mm;
+            height: 50mm;
+            border: 2px dashed #ccc;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 20px auto;
+            background: white;
+        }
+        
+        /* Responsive tables */
+        .table-container {
+            overflow-x: auto;
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        
+        th, td {
+            padding: 16px;
+            text-align: left;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        
+        th {
+            background: #f5f5f5;
+            font-weight: 600;
+            color: #555;
+        }
+        
+        tr:hover {
+            background: #f9f9f9;
+        }
+        
+        /* Skeleton loading */
+        .skeleton {
+            background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+            background-size: 200% 100%;
+            animation: loading 1.5s infinite;
+            border-radius: 8px;
+        }
+        
+        @keyframes loading {
+            0% { background-position: 200% 0; }
+            100% { background-position: -200% 0; }
+        }
+        
+        /* Indicador de conexión */
+        .connection-status {
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 500;
+            z-index: 4000;
+            display: none;
+        }
+        
+        .connection-status.online {
+            background: var(--success);
+            color: white;
+        }
+        
+        .connection-status.offline {
+            background: var(--danger);
+            color: white;
+            display: block;
+        }
+        
+        /* Utilidades */
+        .hidden { display: none !important; }
+        .text-center { text-align: center; }
+        .mb-4 { margin-bottom: 16px; }
+        .mt-4 { margin-top: 16px; }
+        .flex { display: flex; }
+        .items-center { align-items: center; }
+        .justify-between { justify-content: space-between; }
+        .gap-4 { gap: 16px; }
+        .w-full { width: 100%; }
+        .rounded { border-radius: 8px; }
+        .shadow { box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+    </style>
+</head>
+<body>
+    <!-- Indicador de conexión -->
+    <div id="connectionStatus" class="connection-status offline">
+        Modo Offline - Los cambios se sincronizarán cuando haya conexión
+    </div>
+
+    <!-- Scanner Overlay -->
+    <div id="scannerOverlay" class="scanner-overlay">
+        <div class="scanner-container">
+            <div class="flex justify-between items-center mb-4" style="color: white;">
+                <h3>Escanear Código</h3>
+                <button onclick="closeScanner()" style="background: rgba(255,255,255,0.2); border: none; color: white; padding: 8px 16px; border-radius: 8px; cursor: pointer;">
+                    ✕ Cerrar
+                </button>
+            </div>
+            <div id="reader" class="scan-region"></div>
+            <div class="mt-4 text-center" style="color: white;">
+                <p>Apunta la cámara al código de barras o QR</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Sidebar Desktop -->
+    <nav class="sidebar">
+        <div class="mb-8">
+            <h1 class="text-2xl font-bold mb-1">🔧 Refaccionaria</h1>
+            <p class="text-sm opacity-75">Sistema de Almacén WMS</p>
+        </div>
+        
+        <div class="sidebar-item active" onclick="showView('dashboard')">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/></svg>
+            Dashboard
+        </div>
+        
+        <div class="sidebar-item" onclick="showView('locations')">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+            Ubicaciones
+        </div>
+        
+        <div class="sidebar-item" onclick="showView('products')">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>
+            Productos
+        </div>
+        
+        <div class="sidebar-item" onclick="showView('movements')">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/></svg>
+            Movimientos
+        </div>
+        
+        <div class="sidebar-item" onclick="showView('receive')">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"/></svg>
+            Recepción
+        </div>
+        
+        <div class="sidebar-item" onclick="showView('pick')">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"/></svg>
+            Picking
+        </div>
+        
+        <div class="sidebar-item" onclick="showView('reports')">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+            Reportes
+        </div>
+        
+        <div class="mt-auto pt-8">
+            <div class="sidebar-item" onclick="showView('settings')">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                Configuración
+            </div>
+        </div>
+    </nav>
+
+    <!-- Contenido Principal -->
+    <main class="main-content">
+        <!-- Header -->
+        <header class="flex justify-between items-center mb-6">
+            <div>
+                <h2 id="pageTitle" class="text-3xl font-bold text-gray-800">Dashboard</h2>
+                <p id="pageSubtitle" class="text-gray-500 mt-1">Vista general del almacén</p>
+            </div>
+            <div class="flex gap-4 items-center">
+                <button onclick="openScanner()" class="btn btn-primary pulse">
+                    <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v1m6 11h2m-2 0h-2m0 0H8m0 0H6m2 0v-2m0 2v2m0-2h2m-2 0H6m12-7h2m-2 0h-2m0 0H8m0 0H6m2 0V7m0 2v2m0-2h2m-2 0H6"/></svg>
+                    Escanear
+                </button>
+                <div class="text-right hidden md:block">
+                    <p class="font-semibold" id="userName">Administrador</p>
+                    <p class="text-sm text-gray-500" id="currentDate"></p>
+                </div>
+            </div>
+        </header>
+
+        <!-- Vista: Dashboard -->
+        <div id="view-dashboard" class="view">
+            <!-- Búsqueda rápida -->
+            <div class="search-box mb-6">
+                <input type="text" id="globalSearch" placeholder="Buscar producto por nombre, SKU o código de barras..." onkeyup="handleSearch(event)">
+                <button onclick="performSearch()">Buscar</button>
+            </div>
+
+            <!-- Estadísticas -->
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
+                <div class="stat-card">
+                    <div class="flex items-center justify-between mb-4">
+                        <div>
+                            <p class="text-gray-500 text-sm">Total Productos</p>
+                            <p class="text-3xl font-bold" id="statTotalProducts">0</p>
+                        </div>
+                        <div class="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center text-2xl">📦</div>
+                    </div>
+                    <p class="text-sm text-green-600">↑ 12% vs mes anterior</p>
+                </div>
+                
+                <div class="stat-card">
+                    <div class="flex items-center justify-between mb-4">
+                        <div>
+                            <p class="text-gray-500 text-sm">Ubicaciones Ocupadas</p>
+                            <p class="text-3xl font-bold" id="statOccupiedLocations">0/0</p>
+                        </div>
+                        <div class="w-12 h-12 bg-orange-100 rounded-full flex items-center justify-center text-2xl">📍</div>
+                    </div>
+                    <p class="text-sm text-gray-500" id="statOccupancyRate">0% de ocupación</p>
+                </div>
+                
+                <div class="stat-card">
+                    <div class="flex items-center justify-between mb-4">
+                        <div>
+                            <p class="text-gray-500 text-sm">Stock Bajo</p>
+                            <p class="text-3xl font-bold text-orange-600" id="statLowStock">0</p>
+                        </div>
+                        <div class="w-12 h-12 bg-orange-100 rounded-full flex items-center justify-center text-2xl">⚠️</div>
+                    </div>
+                    <p class="text-sm text-orange-600">Requieren reabastecimiento</p>
+                </div>
+                
+                <div class="stat-card">
+                    <div class="flex items-center justify-between mb-4">
+                        <div>
+                            <p class="text-gray-500 text-sm">Movimientos Hoy</p>
+                            <p class="text-3xl font-bold" id="statTodayMovements">0</p>
+                        </div>
+                        <div class="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center text-2xl">🔄</div>
+                    </div>
+                    <p class="text-sm text-green-600">Entradas y salidas</p>
+                </div>
+            </div>
+
+            <!-- Gráfico y actividad reciente -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div class="stat-card">
+                    <h3 class="text-lg font-bold mb-4">Ocupación por Zona</h3>
+                    <canvas id="zoneChart" height="200"></canvas>
+                </div>
+                
+                <div class="stat-card">
+                    <h3 class="text-lg font-bold mb-4">Últimos Movimientos</h3>
+                    <div id="recentMovements" class="space-y-3">
+                        <div class="skeleton" style="height: 60px;"></div>
+                        <div class="skeleton" style="height: 60px;"></div>
+                        <div class="skeleton" style="height: 60px;"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Vista: Ubicaciones -->
+        <div id="view-locations" class="view hidden">
+            <div class="flex justify-between items-center mb-6">
+                <div class="flex gap-4">
+                    <select id="zoneFilter" class="form-control" onchange="filterLocations()">
+                        <option value="">Todas las zonas</option>
+                        <option value="A">Zona A - Repuestos Pequeños</option>
+                        <option value="B">Zona B - Repuestos Medianos</option>
+                        <option value="C">Zona C - Repuestos Grandes</option>
+                        <option value="D">Zona D - Aceites y Líquidos</option>
+                        <option value="E">Zona E - Neumáticos</option>
+                    </select>
+                    <select id="statusFilter" class="form-control" onchange="filterLocations()">
+                        <option value="">Todos los estados</option>
+                        <option value="empty">Vacíos</option>
+                        <option value="occupied">Ocupados</option>
+                        <option value="full">Llenos</option>
+                    </select>
+                </div>
+                <button onclick="openModal('createLocationModal')" class="btn btn-primary">
+                    + Nueva Ubicación
+                </button>
+            </div>
+
+            <!-- Visualización de racks -->
+            <div id="locationsContainer" class="space-y-6">
+                <!-- Se genera dinámicamente -->
+            </div>
+        </div>
+
+        <!-- Vista: Productos -->
+        <div id="view-products" class="view hidden">
+            <div class="flex justify-between items-center mb-6">
+                <div class="search-box" style="max-width: 400px;">
+                    <input type="text" id="productSearch" placeholder="Buscar productos..." onkeyup="filterProducts()">
+                </div>
+                <div class="flex gap-4">
+                    <button onclick="exportProducts()" class="btn btn-secondary">📥 Exportar</button>
+                    <button onclick="openModal('createProductModal')" class="btn btn-primary">+ Nuevo Producto</button>
+                </div>
+            </div>
+
+            <div class="table-container">
+                <table id="productsTable">
+                    <thead>
+                        <tr>
+                            <th>Código</th>
+                            <th>Producto</th>
+                            <th>Ubicación</th>
+                            <th>Stock</th>
+                            <th>Estado</th>
+                            <th>Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody id="productsTableBody">
+                        <!-- Se genera dinámicamente -->
+                    </tbody>
+                </table>
+            </div>
+            
+            <div class="mt-4 flex justify-between items-center">
+                <p class="text-gray-500" id="productsCount">Mostrando 0 productos</p>
+                <div class="flex gap-2">
+                    <button onclick="changePage(-1)" class="btn btn-secondary" id="prevPage">Anterior</button>
+                    <button onclick="changePage(1)" class="btn btn-secondary" id="nextPage">Siguiente</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Vista: Movimientos -->
+        <div id="view-movements" class="view hidden">
+            <div class="flex justify-between items-center mb-6">
+                <div class="flex gap-4">
+                    <input type="date" id="movementDateFrom" class="form-control">
+                    <input type="date" id="movementDateTo" class="form-control">
+                </div>
+                <button onclick="openModal('createMovementModal')" class="btn btn-primary">
+                    + Registrar Movimiento
+                </button>
+            </div>
+
+            <div id="movementsList" class="space-y-3">
+                <!-- Se genera dinámicamente -->
+            </div>
+        </div>
+
+        <!-- Vista: Recepción -->
+        <div id="view-receive" class="view hidden">
+            <div class="max-w-2xl mx-auto">
+                <div class="stat-card">
+                    <h3 class="text-xl font-bold mb-6">Recepción de Mercancía</h3>
+                    
+                    <div class="space-y-6">
+                        <div class="form-group">
+                            <label>Orden de Compra / Factura</label>
+                            <input type="text" id="receiveInvoice" placeholder="Escanea o ingresa el número de factura">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label>Proveedor</label>
+                            <select id="receiveSupplier">
+                                <option value="">Seleccionar proveedor...</option>
+                            </select>
+                        </div>
+
+                        <div id="receiveItems" class="space-y-4">
+                            <div class="p-4 border-2 border-dashed border-gray-300 rounded-lg text-center">
+                                <p class="text-gray-500 mb-4">Agrega productos escaneando sus códigos</p>
+                                <button onclick="startReceiveScan()" class="btn btn-primary">
+                                    📷 Escanear Producto
+                                </button>
+                            </div>
+                        </div>
+
+                        <button onclick="completeReception()" class="btn btn-success w-full">
+                            ✅ Completar Recepción
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Vista: Picking -->
+        <div id="view-pick" class="view hidden">
+            <div class="max-w-2xl mx-auto">
+                <div class="stat-card">
+                    <h3 class="text-xl font-bold mb-6">Picking de Pedido</h3>
+                    
+                    <div class="form-group">
+                        <label>Número de Pedido</label>
+                        <input type="text" id="pickOrderNumber" placeholder="Escanea o ingresa el número de pedido">
+                    </div>
+
+                    <div id="pickList" class="space-y-3 mt-6">
+                        <p class="text-center text-gray-500">Ingresa un número de pedido para ver los items a recolectar</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Vista: Reportes -->
+        <div id="view-reports" class="view hidden">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+                <div class="stat-card cursor-pointer hover:shadow-lg transition" onclick="generateReport('inventory')">
+                    <div class="text-center">
+                        <div class="text-4xl mb-2">📊</div>
+                        <h3 class="font-bold">Inventario Actual</h3>
+                        <p class="text-sm text-gray-500">Stock por ubicación y producto</p>
+                    </div>
+                </div>
+                
+                <div class="stat-card cursor-pointer hover:shadow-lg transition" onclick="generateReport('movements')">
+                    <div class="text-center">
+                        <div class="text-4xl mb-2">📈</div>
+                        <h3 class="font-bold">Movimientos</h3>
+                        <p class="text-sm text-gray-500">Entradas, salidas y transferencias</p>
+                    </div>
+                </div>
+                
+                <div class="stat-card cursor-pointer hover:shadow-lg transition" onclick="generateReport('rotation')">
+                    <div class="text-center">
+                        <div class="text-4xl mb-2">🔄</div>
+                        <h3 class="font-bold">Rotación</h3>
+                        <p class="text-sm text-gray-500">Productos más y menos movidos</p>
+                    </div>
+                </div>
+            </div>
+
+            <div id="reportContainer" class="stat-card hidden">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 id="reportTitle" class="text-lg font-bold">Reporte</h3>
+                    <button onclick="downloadReport()" class="btn btn-secondary">📥 Descargar PDF</button>
+                </div>
+                <div id="reportContent"></div>
+            </div>
+        </div>
+
+        <!-- Vista: Configuración -->
+        <div id="view-settings" class="view hidden">
+            <div class="max-w-2xl">
+                <div class="stat-card mb-6">
+                    <h3 class="text-lg font-bold mb-4">Configuración General</h3>
+                    
+                    <div class="space-y-4">
+                        <div class="form-group">
+                            <label>Nombre de la Refaccionaria</label>
+                            <input type="text" id="configBusinessName" value="Mi Refaccionaria">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label>Alerta de Stock Bajo (unidades)</label>
+                            <input type="number" id="configLowStock" value="10">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label>Formato de Código de Ubicación</label>
+                            <select id="configLocationFormat">
+                                <option value="ZONE-ROW-SHELF">ZONA-FILA-ANAQUEL (Ej: A-01-05)</option>
+                                <option value="ZONE-AISLE-RACK">ZONA-PASILLO-RACK (Ej: A-05-12)</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="stat-card mb-6">
+                    <h3 class="text-lg font-bold mb-4">Impresión de Etiquetas</h3>
+                    <div class="flex gap-4">
+                        <button onclick="printLocationLabels()" class="btn btn-secondary">
+                            🏷️ Etiquetas de Ubicación
+                        </button>
+                        <button onclick="printProductLabels()" class="btn btn-secondary">
+                            🏷️ Etiquetas de Producto
+                        </button>
+                    </div>
+                </div>
+
+                <div class="stat-card">
+                    <h3 class="text-lg font-bold mb-4 text-red-600">Zona Peligrosa</h3>
+                    <button onclick="resetDatabase()" class="btn btn-danger w-full">
+                        🗑️ Reiniciar Base de Datos (Demo)
+                    </button>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Bottom Nav Móvil -->
+    <nav class="bottom-nav md:hidden">
+        <div class="nav-item active" onclick="showView('dashboard')">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/></svg>
+            <span>Inicio</span>
+        </div>
+        <div class="nav-item" onclick="showView('locations')">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+            <span>Ubicaciones</span>
+        </div>
+        <div class="nav-item" onclick="openScanner()">
+            <div style="background: var(--primary); color: white; width: 56px; height: 56px; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin-top: -20px; box-shadow: 0 4px 12px rgba(26,35,126,0.4);">
+                <svg width="28" height="28" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v1m6 11h2m-2 0h-2m0 0H8m0 0H6m2 0v-2m0 2v2m0-2h2m-2 0H6m12-7h2m-2 0h-2m0 0H8m0 0H6m2 0V7m0 2v2m0-2h2m-2 0H6"/></svg>
+            </div>
+        </div>
+        <div class="nav-item" onclick="showView('products')">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>
+            <span>Productos</span>
+        </div>
+        <div class="nav-item" onclick="showView('movements')">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/></svg>
+            <span>Movimientos</span>
+        </div>
+    </nav>
+
+    <!-- Modales -->
+    
+    <!-- Modal: Crear Ubicación -->
+    <div id="createLocationModal" class="modal">
+        <div class="modal-content p-6">
+            <h3 class="text-xl font-bold mb-4">Nueva Ubicación</h3>
+            <div class="space-y-4">
+                <div class="form-group">
+                    <label>Zona</label>
+                    <select id="newLocationZone">
+                        <option value="A">Zona A - Repuestos Pequeños</option>
+                        <option value="B">Zona B - Repuestos Medianos</option>
+                        <option value="C">Zona C - Repuestos Grandes</option>
+                        <option value="D">Zona D - Aceites y Líquidos</option>
+                        <option value="E">Zona E - Neumáticos</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Fila/Rack</label>
+                    <input type="text" id="newLocationRow" placeholder="Ej: 01, 02, A, B">
+                </div>
+                <div class="form-group">
+                    <label>Nivel/Anaquel</label>
+                    <input type="number" id="newLocationShelf" placeholder="Ej: 1, 2, 3" min="1" max="10">
+                </div>
+                <div class="form-group">
+                    <label>Posición</label>
+                    <input type="number" id="newLocationPosition" placeholder="Ej: 1, 2, 3" min="1" max="20">
+                </div>
+                <div class="form-group">
+                    <label>Capacidad Máxima (items)</label>
+                    <input type="number" id="newLocationCapacity" value="50" min="1">
+                </div>
+                <div class="flex gap-4 mt-6">
+                    <button onclick="closeModal('createLocationModal')" class="btn btn-secondary flex-1">Cancelar</button>
+                    <button onclick="createLocation()" class="btn btn-primary flex-1">Crear Ubicación</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal: Crear Producto -->
+    <div id="createProductModal" class="modal">
+        <div class="modal-content p-6">
+            <h3 class="text-xl font-bold mb-4">Nuevo Producto</h3>
+            <div class="space-y-4">
+                <div class="form-group">
+                    <label>Código/SKU</label>
+                    <input type="text" id="newProductSku" placeholder="Ej: REF-001234">
+                </div>
+                <div class="form-group">
+                    <label>Nombre del Producto</label>
+                    <input type="text" id="newProductName" placeholder="Ej: Filtro de Aceite Toyota Corolla">
+                </div>
+                <div class="form-group">
+                    <label>Descripción</label>
+                    <textarea id="newProductDescription" rows="3"></textarea>
+                </div>
+                <div class="form-group">
+                    <label>Categoría</label>
+                    <select id="newProductCategory">
+                        <option value="filtros">Filtros</option>
+                        <option value="frenos">Frenos</option>
+                        <option value="suspension">Suspensión</option>
+                        <option value="motor">Motor</option>
+                        <option value="transmision">Transmisión</option>
+                        <option value="electricos">Eléctricos</option>
+                        <option value="carroceria">Carrocería</option>
+                        <option value="accesorios">Accesorios</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Stock Inicial</label>
+                    <input type="number" id="newProductStock" value="0" min="0">
+                </div>
+                <div class="form-group">
+                    <label>Ubicación</label>
+                    <select id="newProductLocation">
+                        <option value="">Seleccionar ubicación...</option>
+                    </select>
+                </div>
+                <div class="flex gap-4 mt-6">
+                    <button onclick="closeModal('createProductModal')" class="btn btn-secondary flex-1">Cancelar</button>
+                    <button onclick="createProduct()" class="btn btn-primary flex-1">Guardar Producto</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal: Detalle de Producto -->
+    <div id="productDetailModal" class="modal">
+        <div class="modal-content p-6 max-w-4xl">
+            <div id="productDetailContent">
+                <!-- Se genera dinámicamente -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Container -->
+    <div id="toastContainer"></div>
+
+    <!-- Scripts -->
+    <script src="js/supabase.js"></script>
+    <script src="js/db.js"></script>
+    <script src="js/scanner.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>
